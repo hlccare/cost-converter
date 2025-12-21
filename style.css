@@ -1,0 +1,275 @@
+/* 自定义样式 */
+
+/* 全局样式 */
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei",
+    sans-serif;
+  background-color: #f8f9fa;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding-top: 56px; /* 导航栏高度 */
+}
+
+main {
+  flex: 1;
+  padding-top: 20px;
+}
+
+/* 导航栏 */
+.navbar {
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* 英雄区域 */
+.hero-section {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 20px;
+  color: white;
+  margin: 2rem 0;
+  padding: 4rem 2rem !important;
+}
+
+.hero-section i {
+  filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.2));
+}
+
+/* 特性卡片 */
+.feature-card {
+  transition: transform 0.3s, box-shadow 0.3s;
+  border-radius: 15px;
+  border: 1px solid #e9ecef !important;
+}
+
+.feature-card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.15) !important;
+}
+
+/* 步骤编号 */
+.step-number {
+  width: 50px;
+  height: 50px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  font-weight: bold;
+  margin-bottom: 15px;
+}
+
+/* 上传区域 */
+.upload-area {
+  border: 3px dashed #dee2e6;
+  border-radius: 15px;
+  cursor: pointer;
+  transition: all 0.3s;
+  background-color: #f8f9fa;
+}
+
+.upload-area:hover {
+  border-color: #0d6efd;
+  background-color: #e7f1ff;
+}
+
+.upload-area.dragover {
+  border-color: #0d6efd;
+  background-color: #d0e2ff;
+  transform: scale(1.02);
+}
+
+/* 进度条 */
+.progress {
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.progress-bar {
+  border-radius: 10px;
+  transition: width 0.3s ease;
+}
+
+/* 表格样式 */
+.table th {
+  background-color: #f8f9fa;
+  font-weight: 600;
+  border-color: #dee2e6;
+  position: sticky;
+  top: 0;
+}
+
+.table-striped tbody tr:nth-of-type(odd) {
+  background-color: rgba(0, 0, 0, 0.02);
+}
+
+.table tbody tr:hover {
+  background-color: rgba(0, 123, 255, 0.05);
+}
+
+.preview-table {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+/* 页脚 */
+footer {
+  margin-top: auto;
+}
+
+/* 响应式调整 */
+@media (max-width: 768px) {
+  .hero-section {
+    padding: 2rem 1rem !important;
+  }
+
+  .hero-section h1 {
+    font-size: 2rem;
+  }
+
+  .hero-section p {
+    font-size: 1rem;
+  }
+
+  .step-number {
+    width: 40px;
+    height: 40px;
+    font-size: 1.25rem;
+  }
+
+  .upload-area {
+    padding: 2rem 1rem !important;
+  }
+
+  .upload-area h4 {
+    font-size: 1.25rem;
+  }
+
+  .btn-lg {
+    padding: 0.5rem 1rem;
+    font-size: 1rem;
+  }
+
+  main {
+    padding-top: 10px;
+  }
+}
+
+/* 动画 */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fade-in {
+  animation: fadeIn 0.5s ease-out;
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.pulse {
+  animation: pulse 2s infinite;
+}
+
+/* 状态指示器 */
+.status-indicator {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  margin-right: 8px;
+}
+
+.status-ready {
+  background-color: #28a745;
+}
+.status-processing {
+  background-color: #ffc107;
+  animation: pulse 1s infinite;
+}
+.status-error {
+  background-color: #dc3545;
+}
+.status-complete {
+  background-color: #17a2b8;
+}
+
+/* 文件信息卡片 */
+.file-card {
+  border-left: 4px solid #0d6efd;
+}
+
+.file-card.success {
+  border-left-color: #28a745;
+}
+
+.file-card.error {
+  border-left-color: #dc3545;
+}
+
+/* 结果区域 */
+.result-card {
+  border: 2px solid #28a745;
+  box-shadow: 0 0 20px rgba(40, 167, 69, 0.1);
+}
+
+/* 滚动条样式 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #888;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+/* 打印样式 */
+@media print {
+  .navbar,
+  footer,
+  .btn,
+  .no-print {
+    display: none !important;
+  }
+
+  body {
+    padding-top: 0;
+  }
+
+  .card {
+    border: none !important;
+    box-shadow: none !important;
+  }
+
+  .table {
+    border: 1px solid #000;
+  }
+}

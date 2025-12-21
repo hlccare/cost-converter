@@ -1,0 +1,11 @@
+{
+  "name": "cost-converter-web",
+  "version": "1.0.0",
+  "description": "Excel成本表转换前端工具",
+  "scripts": {
+    "start": "live-server"
+  },
+  "devDependencies": {
+    "live-server": "^1.2.2"
+  }
+}

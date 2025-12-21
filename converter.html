@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>在线转换 - 成本表转换工具</title>
+    <!-- Bootstrap 5 CSS -->
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <!-- Bootstrap Icons -->
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css"
+    />
+    <!-- 自定义样式 -->
+    <link rel="stylesheet" href="style.css" />
+    <!-- SheetJS (用于Excel处理) -->
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
+  </head>
+  <body>
+    <!-- 导航栏 -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary fixed-top">
+      <div class="container">
+        <a class="navbar-brand" href="index.html">
+          <i class="bi bi-arrow-left-right"></i> 成本表转换工具
+        </a>
+        <button
+          class="navbar-toggler"
+          type="button"
+          data-bs-toggle="collapse"
+          data-bs-target="#navbarNav"
+        >
+          <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="navbarNav">
+          <ul class="navbar-nav ms-auto">
+            <li class="nav-item">
+              <a class="nav-link" href="index.html">
+                <i class="bi bi-house"></i> 首页
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link active" href="converter.html">
+                <i class="bi bi-arrow-repeat"></i> 在线转换
+              </a>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </nav>
+
+    <!-- 主要内容 -->
+    <main class="container mt-5 pt-5">
+      <h1 class="text-center mb-4">
+        <i class="bi bi-file-earmark-excel text-primary"></i> Excel表格转换
+      </h1>
+      <p class="text-center text-muted mb-5">
+        上传您的Excel文件，系统将自动转换为表2格式（完全本地处理）
+      </p>
+
+      <!-- 上传区域 -->
+      <div class="card shadow-lg mb-5">
+        <div class="card-header bg-primary text-white">
+          <h4 class="mb-0"><i class="bi bi-upload"></i> 上传文件</h4>
+        </div>
+        <div class="card-body">
+          <!-- 拖放上传区域 -->
+          <div
+            class="upload-area text-center p-5 border rounded"
+            id="uploadArea"
+          >
+            <i class="bi bi-cloud-upload display-1 text-primary mb-3"></i>
+            <h4>点击选择文件或拖放到此处</h4>
+            <p class="text-muted mb-4">支持 .xls 和 .xlsx 格式，最大 20MB</p>
+            <input
+              type="file"
+              id="fileInput"
+              class="d-none"
+              accept=".xls,.xlsx"
+            />
+            <button
+              class="btn btn-primary btn-lg"
+              onclick="document.getElementById('fileInput').click()"
+            >
+              <i class="bi bi-folder2-open"></i> 选择Excel文件
+            </button>
+          </div>
+
+          <!-- 文件信息 -->
+          <div class="file-info mt-4" id="fileInfo" style="display: none">
+            <div class="alert alert-info d-flex align-items-center">
+              <i class="bi bi-file-earmark-excel-fill fs-2 me-3"></i>
+              <div class="flex-grow-1">
+                <strong id="fileName"></strong>
+                <div class="small" id="fileSize"></div>
+                <div class="small text-muted" id="fileStatus">等待转换</div>
+              </div>
+              <button
+                class="btn btn-sm btn-outline-danger"
+                onclick="clearFile()"
+              >
+                <i class="bi bi-x-lg"></i>
+              </button>
+            </div>
+          </div>
+
+          <!-- 进度条 -->
+          <div
+            class="progress-section mt-4"
+            id="progressSection"
+            style="display: none"
+          >
+            <div class="progress mb-3" style="height: 20px">
+              <div
+                id="progressBar"
+                class="progress-bar progress-bar-striped progress-bar-animated"
+                style="width: 0%"
+              ></div>
+            </div>
+            <p class="text-center mb-0" id="progressText">正在准备转换...</p>
+          </div>
+
+          <!-- 转换按钮 -->
+          <div class="text-center mt-4">
+            <button
+              class="btn btn-success btn-lg"
+              id="convertBtn"
+              onclick="startConversion()"
+              disabled
+            >
+              <i class="bi bi-arrow-repeat"></i> 开始转换
+            </button>
+            <button
+              class="btn btn-outline-secondary btn-lg ms-3"
+              onclick="resetConverter()"
+              id="resetBtn"
+              style="display: none"
+            >
+              <i class="bi bi-x-circle"></i> 取消
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 处理状态 -->
+      <div
+        class="alert alert-info mt-4"
+        id="statusMessage"
+        style="display: none"
+        role="alert"
+      >
+        <i class="bi bi-info-circle me-2"></i>
+        <span id="statusText"></span>
+      </div>
+
+      <!-- 错误提示 -->
+      <div
+        class="alert alert-danger mt-4"
+        id="errorMessage"
+        style="display: none"
+        role="alert"
+      >
+        <i class="bi bi-exclamation-triangle me-2"></i>
+        <span id="errorText"></span>
+      </div>
+
+      <!-- 结果区域 -->
+      <div class="card shadow-lg" id="resultSection" style="display: none">
+        <div class="card-header bg-success text-white">
+          <h4 class="mb-0"><i class="bi bi-check-circle"></i> 转换完成！</h4>
+        </div>
+        <div class="card-body">
+          <div class="alert alert-success">
+            <i class="bi bi-info-circle"></i>
+            <strong>文件已成功转换！</strong>
+            <div class="mt-2">
+              <span id="resultStats">共 0 行数据</span> |
+              <span id="processTime">处理时间：0秒</span>
+            </div>
+          </div>
+
+          <div class="text-center">
+            <button
+              class="btn btn-primary btn-lg"
+              id="downloadBtn"
+              onclick="downloadResult()"
+            >
+              <i class="bi bi-download"></i> 下载转换结果
+            </button>
+            <button
+              class="btn btn-outline-secondary btn-lg ms-3"
+              onclick="resetConverter()"
+            >
+              <i class="bi bi-plus-circle"></i> 转换新文件
+            </button>
+          </div>
+
+          <!-- 预览区域 -->
+          <div class="preview-section mt-4">
+            <h5><i class="bi bi-table"></i> 转换预览（前10行）</h5>
+            <div class="table-responsive">
+              <table
+                class="table table-bordered table-striped"
+                id="previewTable"
+              >
+                <thead class="table-dark">
+                  <tr>
+                    <th>清单项编码</th>
+                    <th>层级编码</th>
+                    <th>清单项名称</th>
+                    <th>测算金额无税</th>
+                    <th>合同造价无税金额</th>
+                  </tr>
+                </thead>
+                <tbody id="previewTableBody">
+                  <!-- 动态填充 -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 使用说明 -->
+      <div class="card shadow-lg mt-5">
+        <div class="card-header bg-info text-white">
+          <h4 class="mb-0"><i class="bi bi-info-circle"></i> 使用说明</h4>
+        </div>
+        <div class="card-body">
+          <div class="row">
+            <div class="col-md-6">
+              <h5>
+                <i class="bi bi-exclamation-triangle text-warning"></i> 文件要求
+              </h5>
+              <ul>
+                <li>文件必须包含名为"表1"的工作表</li>
+                <li>支持 .xls 和 .xlsx 格式</li>
+                <li>文件大小不超过20MB</li>
+                <li>确保文件格式符合模板要求</li>
+              </ul>
+            </div>
+            <div class="col-md-6">
+              <h5><i class="bi bi-lightbulb text-primary"></i> 使用提示</h5>
+              <ul>
+                <li>所有处理都在浏览器本地完成，无需上传</li>
+                <li>转换过程不会消耗您的流量</li>
+                <li>文件处理完成后请及时下载结果</li>
+                <li>大文件转换可能需要一些时间</li>
+                <li>建议使用Chrome或Edge浏览器</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- 页脚 -->
+    <footer class="bg-dark text-white py-4 mt-5">
+      <div class="container">
+        <div class="row">
+          <div class="col-md-6">
+            <h5><i class="bi bi-arrow-left-right"></i> 成本表转换工具</h5>
+            <p class="mb-0">基于 SheetJS 的纯前端Excel转换工具</p>
+          </div>
+          <div class="col-md-6 text-md-end">
+            <p class="mb-0">© 2024 成本表转换工具 | 完全本地处理，保护隐私</p>
+          </div>
+        </div>
+      </div>
+    </footer>
+
+    <!-- Bootstrap JS Bundle -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Excel转换核心逻辑 -->
+    <script src="excel-converter.js"></script>
+    <!-- 自定义JS -->
+    <script src="script.js"></script>
+  </body>
+</html>
