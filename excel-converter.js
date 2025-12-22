@@ -212,6 +212,13 @@ class ExcelConverter {
 
       if (!cleanSeq || !this.isValidSequence(cleanSeq)) continue;
 
+      // 调试：输出原始序号和处理后的序号
+      console.log(
+        `原始序号: "${seq}" -> 清理后: "${cleanSeq}" -> 格式化: "${this.formatSequenceCode(
+          cleanSeq
+        )}"`
+      );
+
       // 判断行类型
       const isMaterial = cleanSeq.startsWith("4");
       const isOtherCost = cleanSeq.startsWith("5");
@@ -220,23 +227,20 @@ class ExcelConverter {
 
       // 创建行
       if (isMaterial || isOtherCost) {
-        // 材料/机械、其他费用（只有占位行）
-        rows.push(
-          this.createPlaceholderRow(cleanSeq, cleanSeq, name, category)
-        );
+        rows.push(this.createPlaceholderRow(cleanSeq, name, category));
       } else if (hasProfSub || hasLaborSub) {
-        // 有分包数据（先创建占位行，再创建分包行）
-        rows.push(
-          this.createPlaceholderRow(cleanSeq, cleanSeq, name, category)
-        );
+        // 先创建占位行
+        rows.push(this.createPlaceholderRow(cleanSeq, name, category));
 
+        // 创建分包行
         if (hasProfSub) {
+          console.log(`创建专业分包行: ${cleanSeq}, 金额: ${profSub}`);
           rows.push(
             this.createDetailRow(
               cleanSeq,
               name,
               "专业分包",
-              "0001",
+              "0002",
               quantity,
               profSub,
               contractPrice,
@@ -246,12 +250,13 @@ class ExcelConverter {
         }
 
         if (hasLaborSub) {
+          console.log(`创建劳务分包行: ${cleanSeq}, 金额: ${laborSub}`);
           rows.push(
             this.createDetailRow(
               cleanSeq,
               name,
               "劳务分包",
-              "0002",
+              "0001",
               quantity,
               laborSub,
               contractPrice,
@@ -260,10 +265,7 @@ class ExcelConverter {
           );
         }
       } else {
-        // 普通层级（只有占位行）
-        rows.push(
-          this.createPlaceholderRow(cleanSeq, cleanSeq, name, category)
-        );
+        rows.push(this.createPlaceholderRow(cleanSeq, name, category));
       }
     }
 
@@ -271,11 +273,38 @@ class ExcelConverter {
     return rows;
   }
 
+  // 格式化序列编码（第一层保持原样，其他层补0到3位）
+  formatSequenceCode(seq) {
+    if (!seq || seq === "") return seq;
+
+    const parts = seq.split(".");
+
+    // 第一个层级保持原样，其他层级补0到3位
+    const formattedParts = parts.map((part, index) => {
+      if (index === 0) {
+        return part; // 第一层保持原样
+      }
+
+      // 确保是数字，不是数字的直接返回
+      if (!/^\d+$/.test(part)) {
+        return part;
+      }
+
+      // 补0到3位
+      return part.padStart(3, "0");
+    });
+
+    return formattedParts.join(".");
+  }
+
   // 创建占位行
-  createPlaceholderRow(seq, level, name, category) {
+  createPlaceholderRow(seq, name, category) {
+    // 格式化编码
+    const formattedSeq = this.formatSequenceCode(seq);
+
     return {
-      清单项编码: seq,
-      层级编码: level,
+      清单项编码: formattedSeq,
+      层级编码: formattedSeq,
       清单项名称: name,
       成本科目编码: category,
       测算数量: "",
@@ -299,10 +328,17 @@ class ExcelConverter {
     contractPrice,
     unit
   ) {
-    const subSeq = `${parentSeq}.${subType === "专业分包" ? "1" : "2"}`;
+    // 格式化父级编码
+    const formattedParentSeq = this.formatSequenceCode(parentSeq);
+
+    // 统一分包编码为 .001
+    const subCode = "001";
+    const subSeq = `${formattedParentSeq}.${subCode}`;
     const subName = `${name}：${subType}`;
 
-    // 计算金额
+    // 成本科目编码：劳务分包=0001，专业分包=0002
+    const correctCategoryCode = subType === "劳务分包" ? "0001" : "0002";
+
     const calcAmount =
       quantity !== null && unitPrice !== null ? quantity * unitPrice : null;
     const contractAmount =
@@ -314,7 +350,7 @@ class ExcelConverter {
       清单项编码: subSeq,
       层级编码: subSeq,
       清单项名称: subName,
-      成本科目编码: categoryCode,
+      成本科目编码: correctCategoryCode,
       测算数量: this.formatDecimal(quantity),
       测算单价: this.formatDecimal(unitPrice),
       测算金额无税: this.formatDecimal(calcAmount),
@@ -330,12 +366,8 @@ class ExcelConverter {
     console.log("开始计算汇总金额...");
 
     // 分离明细行和汇总行
-    const detailRows = rows.filter(
-      (row) => row.清单项编码.endsWith(".1") || row.清单项编码.endsWith(".2")
-    );
-    const summaryRows = rows.filter(
-      (row) => !row.清单项编码.endsWith(".1") && !row.清单项编码.endsWith(".2")
-    );
+    const detailRows = rows.filter((row) => row.清单项编码.endsWith(".001"));
+    const summaryRows = rows.filter((row) => !row.清单项编码.endsWith(".001"));
 
     const summaryDict = {};
 
@@ -345,8 +377,8 @@ class ExcelConverter {
       const calcAmount = this.parseNumber(detail.测算金额无税);
       const contractAmount = this.parseNumber(detail.合同造价无税金额);
 
-      // 获取父级编码（移除最后的.1或.2）
-      const parentSeq = seq.slice(0, -2);
+      // 获取父级编码（移除最后的.001）
+      const parentSeq = seq.slice(0, -4);
       const parts = parentSeq.split(".");
 
       // 为每一级父级累加金额
@@ -412,77 +444,23 @@ class ExcelConverter {
     return resultRows;
   }
 
-  // 辅助函数：解析数字
-  parseNumber(value) {
-    if (
-      value === "" ||
-      value === null ||
-      value === undefined ||
-      value === "NaN"
-    ) {
-      return null;
-    }
-
-    if (typeof value === "number") {
-      return isNaN(value) ? null : value;
-    }
-
-    if (typeof value === "string") {
-      // 清理字符串中的非数字字符（保留小数点、负号）
-      const cleaned = value.replace(/[^\d.-]/g, "");
-      if (cleaned === "" || cleaned === "-" || cleaned === ".") {
-        return null;
-      }
-
-      const num = parseFloat(cleaned);
-      return isNaN(num) ? null : num;
-    }
-
-    return null;
-  }
-
-  // 辅助函数：格式化小数
-  formatDecimal(value, decimals = 3) {
-    if (value === null || value === undefined) return "";
-    if (typeof value === "string" && value.trim() === "") return "";
-
-    const num = Number(value);
-    if (isNaN(num)) return "";
-
-    // 四舍五入到指定小数位
-    const multiplier = Math.pow(10, decimals);
-    const rounded = Math.round(num * multiplier) / multiplier;
-
-    // 格式化，移除末尾的0
-    let formatted = rounded.toFixed(decimals);
-
-    // 移除末尾的0和小数点
-    while (
-      formatted.includes(".") &&
-      (formatted.endsWith("0") || formatted.endsWith("."))
-    ) {
-      formatted = formatted.substring(0, formatted.length - 1);
-    }
-
-    return formatted || "0";
-  }
-
-  // 辅助函数：清理序号
+  // 清理序号（避免将数字当做小数处理）
   cleanSequence(seq) {
     if (typeof seq !== "string") {
       seq = String(seq || "");
     }
+    // 移除括号和空格，但要保留小数点
     return seq.replace(/[（）()\s、]/g, "");
   }
 
-  // 辅助函数：检查是否是中文数字
+  // 检查是否是中文数字
   isChineseNumber(text) {
     if (!text || typeof text !== "string") return false;
     const chineseDigits = "零一二三四五六七八九十百千万亿";
     return Array.from(text).some((char) => chineseDigits.includes(char));
   }
 
-  // 辅助函数：中文数字转阿拉伯数字
+  // 中文数字转阿拉伯数字
   chineseToNumber(text) {
     if (!text) return text;
 
@@ -519,20 +497,82 @@ class ExcelConverter {
     return text;
   }
 
-  // 辅助函数：检查序号是否有效
+  // 检查序号是否有效
   isValidSequence(seq) {
     if (!seq) return false;
-    return /^[\d.]+$/.test(seq);
+    // 允许数字和点，但不能以点开头或结尾，不能连续两个点
+    return /^(\d+(\.\d+)*)$/.test(seq);
   }
 
-  // 辅助函数：排序序号
+  // 解析数字
+  parseNumber(value) {
+    if (
+      value === "" ||
+      value === null ||
+      value === undefined ||
+      value === "NaN"
+    ) {
+      return null;
+    }
+
+    if (typeof value === "number") {
+      return isNaN(value) ? null : value;
+    }
+
+    if (typeof value === "string") {
+      // 清理字符串中的非数字字符（保留小数点、负号）
+      const cleaned = value.replace(/[^\d.-]/g, "");
+      if (cleaned === "" || cleaned === "-" || cleaned === ".") {
+        return null;
+      }
+
+      const num = parseFloat(cleaned);
+      return isNaN(num) ? null : num;
+    }
+
+    return null;
+  }
+
+  // 格式化小数
+  formatDecimal(value, decimals = 3) {
+    if (value === null || value === undefined) return "";
+    if (typeof value === "string" && value.trim() === "") return "";
+
+    const num = Number(value);
+    if (isNaN(num)) return "";
+
+    // 四舍五入到指定小数位
+    const multiplier = Math.pow(10, decimals);
+    const rounded = Math.round(num * multiplier) / multiplier;
+
+    // 格式化，移除末尾的0
+    let formatted = rounded.toFixed(decimals);
+
+    // 移除末尾的0和小数点
+    while (
+      formatted.includes(".") &&
+      (formatted.endsWith("0") || formatted.endsWith("."))
+    ) {
+      formatted = formatted.substring(0, formatted.length - 1);
+    }
+
+    return formatted || "0";
+  }
+
+  // 排序序号
   sortSequence(a, b) {
     if (!a && !b) return 0;
     if (!a) return -1;
     if (!b) return 1;
 
-    const partsA = a.split(".").map((p) => p.padStart(3, "0"));
-    const partsB = b.split(".").map((p) => p.padStart(3, "0"));
+    // 将编码拆分为部分，每部分补0到3位以便排序
+    const normalizePart = (part, index) => {
+      // 第一层也补0到3位方便排序，但显示时保持原样
+      return part.padStart(3, "0");
+    };
+
+    const partsA = a.split(".").map(normalizePart);
+    const partsB = b.split(".").map(normalizePart);
 
     for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
       const partA = partsA[i] || "000";
@@ -701,5 +741,65 @@ class ExcelConverter {
     this.projectName = "项目一";
     this.startTime = null;
     this.endTime = null;
+  }
+
+  // 测试函数
+  testFormatting() {
+    console.log("=== 编码格式化测试 ===");
+
+    const testCases = [
+      ["1", "1"],
+      ["1.1", "1.001"],
+      ["1.10", "1.010"],
+      ["1.1.1", "1.001.001"],
+      ["1.1.1.1", "1.001.001.001"],
+      ["1.2.3", "1.002.003"],
+      ["2.10.5", "2.010.005"],
+      ["10.20.30", "10.020.030"],
+      ["1.001", "1.001"],
+      ["1.001.002", "1.001.002"],
+      ["4.1.2", "4.001.002"],
+      ["5.2.1", "5.002.001"],
+    ];
+
+    let allPassed = true;
+    testCases.forEach(([input, expected]) => {
+      const result = this.formatSequenceCode(input);
+      const passed = result === expected;
+      if (!passed) allPassed = false;
+      console.log(
+        `${passed ? "✅" : "❌"} ${input} -> ${result} (期望: ${expected})`
+      );
+    });
+
+    console.log(allPassed ? "✅ 所有测试通过" : "❌ 有测试失败");
+    return allPassed;
+  }
+
+  // 测试序号解析
+  testSequenceParsing() {
+    console.log("=== 序号解析测试 ===");
+
+    const testCases = [
+      ["1.10", "1.10", "1.010"],
+      ["1.1", "1.1", "1.001"],
+      ["2.100", "2.100", "2.100"],
+      ["3.5.10", "3.5.10", "3.005.010"],
+      ["10.20.30", "10.20.30", "10.020.030"],
+      ["一", "1", "1"],
+      ["二.1", "2.1", "2.001"],
+      ["1.2.3.4", "1.2.3.4", "1.002.003.004"],
+    ];
+
+    testCases.forEach(([input, expectedParsed, expectedFormatted]) => {
+      const parsed = this.cleanSequence(input);
+      const formatted = this.formatSequenceCode(parsed);
+      console.log(
+        `输入: "${input}" -> 清理: "${parsed}" -> 格式化: "${formatted}"`
+      );
+      console.log(
+        `  期望清理: "${expectedParsed}", 期望格式化: "${expectedFormatted}"`
+      );
+    });
   }
 }
