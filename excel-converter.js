@@ -1,4 +1,4 @@
-// excel-converter.js - 前端Excel处理核心逻辑
+// excel-converter.js - 前端Excel处理核心逻辑（修改版）
 class ExcelConverter {
   constructor() {
     this.workbook = null;
@@ -188,89 +188,240 @@ class ExcelConverter {
     // 第一行：项目汇总行
     rows.push(this.createPlaceholderRow("0", "0", this.projectName, ""));
 
-    // 处理每一行
-    for (const row of data) {
-      const seq = row.序号;
-      const name = row.项目名称;
-      const category = row.分包策划分类;
-      const unit = row.单位.replace("m3", "立方米").replace("M3", "立方米");
+    // 分组数据：按一级工程分组
+    const groupedByFirstLevel = this.groupDataByFirstLevel(data);
 
-      const quantity = row.数量;
-      const contractPrice = row.合同单价;
-      const profSub = row.专业分包;
-      const laborSub = row.劳务分包;
+    // 处理每个一级工程组
+    for (const [firstLevelCode, groupData] of Object.entries(
+      groupedByFirstLevel
+    )) {
+      // 找出该组中所有二级工程（排除材料、机械、其他费用等）
+      const subProjects = this.extractSubProjects(groupData);
 
-      // 跳过表头行
-      if (seq === "1" && name === "2") continue;
-      if (seq === "一") continue;
+      // 计算需要特殊处理的二级工程数量
+      const totalSubProjects = subProjects.length;
 
-      // 处理中文序号
-      let cleanSeq = this.cleanSequence(seq);
-      if (this.isChineseNumber(cleanSeq)) {
-        cleanSeq = this.chineseToNumber(cleanSeq);
-      }
+      // 处理该组中的每一行
+      for (const row of groupData) {
+        const seq = row.序号;
+        const name = row.项目名称;
+        const category = row.分包策划分类;
+        const unit = row.单位.replace("m3", "立方米").replace("M3", "立方米");
 
-      if (!cleanSeq || !this.isValidSequence(cleanSeq)) continue;
+        const quantity = row.数量;
+        const contractPrice = row.合同单价;
+        const profSub = row.专业分包;
+        const laborSub = row.劳务分包;
 
-      // 调试：输出原始序号和处理后的序号
-      console.log(
-        `原始序号: "${seq}" -> 清理后: "${cleanSeq}" -> 格式化: "${this.formatSequenceCode(
-          cleanSeq
-        )}"`
-      );
+        // 跳过表头行
+        if (seq === "1" && name === "2") continue;
+        if (seq === "一") continue;
 
-      // 判断行类型
-      const isMaterial = cleanSeq.startsWith("4");
-      const isOtherCost = cleanSeq.startsWith("5");
-      const hasProfSub = profSub !== null && profSub !== 0;
-      const hasLaborSub = laborSub !== null && laborSub !== 0;
-
-      // 创建行
-      if (isMaterial || isOtherCost) {
-        rows.push(this.createPlaceholderRow(cleanSeq, name, category));
-      } else if (hasProfSub || hasLaborSub) {
-        // 先创建占位行
-        rows.push(this.createPlaceholderRow(cleanSeq, name, category));
-
-        // 创建分包行
-        if (hasProfSub) {
-          console.log(`创建专业分包行: ${cleanSeq}, 金额: ${profSub}`);
-          rows.push(
-            this.createDetailRow(
-              cleanSeq,
-              name,
-              "专业分包",
-              "0002",
-              quantity,
-              profSub,
-              contractPrice,
-              unit
-            )
-          );
+        // 处理中文序号
+        let cleanSeq = this.cleanSequence(seq);
+        if (this.isChineseNumber(cleanSeq)) {
+          cleanSeq = this.chineseToNumber(cleanSeq);
         }
 
-        if (hasLaborSub) {
-          console.log(`创建劳务分包行: ${cleanSeq}, 金额: ${laborSub}`);
-          rows.push(
-            this.createDetailRow(
-              cleanSeq,
-              name,
-              "劳务分包",
-              "0001",
-              quantity,
-              laborSub,
-              contractPrice,
-              unit
-            )
-          );
+        if (!cleanSeq || !this.isValidSequence(cleanSeq)) continue;
+
+        // 获取当前行的二级工程信息
+        const currentSubProject = this.getSubProjectInfo(cleanSeq, subProjects);
+        const subProjectIndex = currentSubProject
+          ? subProjects.findIndex((sp) => sp.code === currentSubProject.code)
+          : -1;
+
+        // 判断是否为倒数第一或第二的二级工程
+        const isLastTwo =
+          subProjectIndex >= totalSubProjects - 2 && subProjectIndex >= 0;
+
+        const hasProfSub = profSub !== null && profSub !== 0;
+        const hasLaborSub = laborSub !== null && laborSub !== 0;
+
+        // 调试信息
+        console.log(
+          `行: ${cleanSeq}, 名称: ${name}, 是否为倒数两个: ${isLastTwo}, 专业分包: ${hasProfSub}, 劳务分包: ${hasLaborSub}`
+        );
+
+        // 创建行逻辑
+        if (isLastTwo) {
+          // 倒数两个二级工程：只创建占位行，不创建分包明细行
+          rows.push(this.createPlaceholderRow(cleanSeq, name, category));
+        } else if (hasProfSub || hasLaborSub) {
+          // 非倒数两个且有分包数据：创建占位行+分包明细行
+          rows.push(this.createPlaceholderRow(cleanSeq, name, category));
+
+          if (hasProfSub) {
+            console.log(`创建专业分包行: ${cleanSeq}, 金额: ${profSub}`);
+            rows.push(
+              this.createDetailRow(
+                cleanSeq,
+                name,
+                "专业分包",
+                "0002",
+                quantity,
+                profSub,
+                contractPrice,
+                unit
+              )
+            );
+          }
+
+          if (hasLaborSub) {
+            console.log(`创建劳务分包行: ${cleanSeq}, 金额: ${laborSub}`);
+            rows.push(
+              this.createDetailRow(
+                cleanSeq,
+                name,
+                "劳务分包",
+                "0001",
+                quantity,
+                laborSub,
+                contractPrice,
+                unit
+              )
+            );
+          }
+        } else {
+          // 普通行：只创建占位行
+          rows.push(this.createPlaceholderRow(cleanSeq, name, category));
         }
-      } else {
-        rows.push(this.createPlaceholderRow(cleanSeq, name, category));
       }
     }
 
     console.log("基础转换完成，总行数:", rows.length);
     return rows;
+  }
+
+  // 按一级工程分组数据
+  groupDataByFirstLevel(data) {
+    const groups = {};
+    let currentGroup = null;
+
+    for (const row of data) {
+      const seq = row.序号;
+      const cleanSeq = this.cleanSequence(seq);
+
+      // 检查是否是一级工程（如"一"、"二"等）
+      if (this.isFirstLevelSequence(cleanSeq)) {
+        currentGroup = cleanSeq;
+        if (!groups[currentGroup]) {
+          groups[currentGroup] = [];
+        }
+      }
+
+      if (
+        currentGroup &&
+        seq !== "一" &&
+        !(seq === "1" && row.项目名称 === "2")
+      ) {
+        groups[currentGroup].push(row);
+      }
+    }
+
+    console.log("按一级工程分组完成:", Object.keys(groups));
+    return groups;
+  }
+
+  // 判断是否是一级工程序号
+  isFirstLevelSequence(seq) {
+    if (!seq) return false;
+
+    // 中文数字的一级工程
+    if (this.isChineseNumber(seq)) {
+      const num = this.chineseToNumber(seq);
+      return /^\d+$/.test(num) && !seq.includes(".");
+    }
+
+    // 阿拉伯数字的一级工程（如"1"、"2"等，但不包括"1.1"）
+    return /^\d+$/.test(seq) && !seq.includes(".");
+  }
+
+  // 提取二级工程信息
+  extractSubProjects(groupData) {
+    const subProjects = [];
+
+    for (const row of groupData) {
+      const seq = row.序号;
+      const cleanSeq = this.cleanSequence(seq);
+
+      // 跳过一级工程行
+      if (this.isFirstLevelSequence(cleanSeq)) continue;
+
+      // 检查是否是二级工程（如"1.1"、"1.2"等）
+      const parts = cleanSeq.split(".");
+      if (
+        parts.length === 2 &&
+        /^\d+$/.test(parts[0]) &&
+        /^\d+$/.test(parts[1])
+      ) {
+        // 检查是否是倒数两个工程部分（材料、机械、其他费用等）
+        const isLastTwoParts = this.isLastTwoParts(cleanSeq, groupData);
+
+        if (!isLastTwoParts) {
+          const seqNum = parseInt(parts[1]);
+          subProjects.push({
+            code: cleanSeq,
+            name: row.项目名称,
+            seqNum: seqNum,
+          });
+        }
+      }
+    }
+
+    // 按序号排序
+    subProjects.sort((a, b) => a.seqNum - b.seqNum);
+
+    console.log(
+      `提取二级工程: ${subProjects.length}个`,
+      subProjects.map((sp) => sp.code)
+    );
+    return subProjects;
+  }
+
+  // 判断是否是倒数两个工程部分
+  isLastTwoParts(seq, groupData) {
+    const parts = seq.split(".");
+    if (parts.length !== 2) return false;
+
+    const firstLevel = parts[0];
+    const secondLevel = parseInt(parts[1]);
+
+    // 找出该一级工程下的所有二级工程序号
+    const secondLevels = new Set();
+
+    for (const row of groupData) {
+      const rowSeq = row.序号;
+      const cleanRowSeq = this.cleanSequence(rowSeq);
+      const rowParts = cleanRowSeq.split(".");
+
+      if (rowParts.length === 2 && rowParts[0] === firstLevel) {
+        const num = parseInt(rowParts[1]);
+        if (!isNaN(num)) {
+          secondLevels.add(num);
+        }
+      }
+    }
+
+    // 转换为数组并排序
+    const sortedLevels = Array.from(secondLevels).sort((a, b) => a - b);
+
+    // 判断是否是最大的两个数字
+    if (sortedLevels.length >= 2) {
+      const maxTwo = sortedLevels.slice(-2);
+      return maxTwo.includes(secondLevel);
+    }
+
+    return false;
+  }
+
+  // 获取二级工程信息
+  getSubProjectInfo(seq, subProjects) {
+    const parts = seq.split(".");
+    if (parts.length === 2) {
+      return subProjects.find((sp) => sp.code === seq);
+    }
+    return null;
   }
 
   // 格式化序列编码（第一层保持原样，其他层补0到3位）
@@ -444,7 +595,7 @@ class ExcelConverter {
     return resultRows;
   }
 
-  // 清理序号（避免将数字当做小数处理）
+  // 清理序号
   cleanSequence(seq) {
     if (typeof seq !== "string") {
       seq = String(seq || "");
@@ -741,65 +892,5 @@ class ExcelConverter {
     this.projectName = "项目一";
     this.startTime = null;
     this.endTime = null;
-  }
-
-  // 测试函数
-  testFormatting() {
-    console.log("=== 编码格式化测试 ===");
-
-    const testCases = [
-      ["1", "1"],
-      ["1.1", "1.001"],
-      ["1.10", "1.010"],
-      ["1.1.1", "1.001.001"],
-      ["1.1.1.1", "1.001.001.001"],
-      ["1.2.3", "1.002.003"],
-      ["2.10.5", "2.010.005"],
-      ["10.20.30", "10.020.030"],
-      ["1.001", "1.001"],
-      ["1.001.002", "1.001.002"],
-      ["4.1.2", "4.001.002"],
-      ["5.2.1", "5.002.001"],
-    ];
-
-    let allPassed = true;
-    testCases.forEach(([input, expected]) => {
-      const result = this.formatSequenceCode(input);
-      const passed = result === expected;
-      if (!passed) allPassed = false;
-      console.log(
-        `${passed ? "✅" : "❌"} ${input} -> ${result} (期望: ${expected})`
-      );
-    });
-
-    console.log(allPassed ? "✅ 所有测试通过" : "❌ 有测试失败");
-    return allPassed;
-  }
-
-  // 测试序号解析
-  testSequenceParsing() {
-    console.log("=== 序号解析测试 ===");
-
-    const testCases = [
-      ["1.10", "1.10", "1.010"],
-      ["1.1", "1.1", "1.001"],
-      ["2.100", "2.100", "2.100"],
-      ["3.5.10", "3.5.10", "3.005.010"],
-      ["10.20.30", "10.20.30", "10.020.030"],
-      ["一", "1", "1"],
-      ["二.1", "2.1", "2.001"],
-      ["1.2.3.4", "1.2.3.4", "1.002.003.004"],
-    ];
-
-    testCases.forEach(([input, expectedParsed, expectedFormatted]) => {
-      const parsed = this.cleanSequence(input);
-      const formatted = this.formatSequenceCode(parsed);
-      console.log(
-        `输入: "${input}" -> 清理: "${parsed}" -> 格式化: "${formatted}"`
-      );
-      console.log(
-        `  期望清理: "${expectedParsed}", 期望格式化: "${expectedFormatted}"`
-      );
-    });
   }
 }
