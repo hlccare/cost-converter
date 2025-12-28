@@ -1,15 +1,16 @@
-// excel-converter.js - 前端Excel处理核心逻辑（修改版）
+// excel-converter.js - 修复金额汇总的树形结构版本
 class ExcelConverter {
   constructor() {
     this.workbook = null;
     this.sheet1Data = null;
-    this.sheet2Data = null;
+    this.treeData = null;
     this.projectName = "项目一";
     this.startTime = null;
     this.endTime = null;
+    this.nodeMap = new Map(); // 用于快速查找节点
   }
 
-  // 读取Excel文件
+  // 读取Excel文件（保持不变）
   async readExcelFile(file) {
     return new Promise((resolve, reject) => {
       if (!file) {
@@ -17,22 +18,16 @@ class ExcelConverter {
         return;
       }
 
-      // 检查文件类型
-      const validTypes = [
-        "application/vnd.ms-excel",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      ];
       const validExts = [".xls", ".xlsx"];
       const fileExt = file.name
         .substring(file.name.lastIndexOf("."))
         .toLowerCase();
 
-      if (!validExts.includes(fileExt) && !validTypes.includes(file.type)) {
+      if (!validExts.includes(fileExt)) {
         reject(new Error("只支持 .xls 和 .xlsx 格式的Excel文件"));
         return;
       }
 
-      // 检查文件大小（限制20MB）
       if (file.size > 20 * 1024 * 1024) {
         reject(new Error("文件大小不能超过20MB"));
         return;
@@ -51,7 +46,6 @@ class ExcelConverter {
             cellText: false,
           });
 
-          // 检查是否有"表1"工作表
           const sheetNames = this.workbook.SheetNames;
           const targetSheet = sheetNames.find(
             (name) => name.includes("表1") || name === "表1"
@@ -63,7 +57,6 @@ class ExcelConverter {
             );
           }
 
-          // 读取表1数据
           this.sheet1Data = XLSX.utils.sheet_to_json(
             this.workbook.Sheets[targetSheet],
             {
@@ -90,22 +83,21 @@ class ExcelConverter {
     });
   }
 
-  // 清理表1数据
-  cleanSheet1Data(data) {
+  // 清理表1数据并构建树形结构
+  cleanSheet1DataAndBuildTree(data) {
     if (!data || data.length < 10) {
       throw new Error("Excel数据格式不正确，数据行数不足");
     }
 
-    console.log("开始清理数据...");
-    const cleaned = [];
+    console.log("开始清理数据并构建树形结构...");
+    const cleanedRows = [];
     let foundFirstRow = false;
 
-    // 查找数据开始位置（跳过表头）
+    // 1. 提取有效数据行
     for (let i = 0; i < data.length; i++) {
       const row = data[i];
-      if (row.length < 10) continue;
+      if (row.length < 5) continue;
 
-      // 检查是否找到"序号"列（通常在第3列，索引2）
       const seqValue = String(row[2] || "").trim();
 
       if (seqValue === "一" || seqValue === "1") {
@@ -122,15 +114,14 @@ class ExcelConverter {
           合同单价: this.parseNumber(row[7]),
           专业分包: this.parseNumber(row[8]),
           劳务分包: this.parseNumber(row[9]),
+          原始行数据: row,
         };
 
-        // 记录项目名称
         if (seqValue === "一" && cleanedRow.项目名称) {
           this.projectName = cleanedRow.项目名称;
           console.log("发现项目名称:", this.projectName);
         }
 
-        // 跳过完全空的行
         if (
           !cleanedRow.序号 ||
           cleanedRow.序号 === "nan" ||
@@ -139,16 +130,507 @@ class ExcelConverter {
           continue;
         }
 
-        cleaned.push(cleanedRow);
+        cleanedRows.push(cleanedRow);
       }
     }
 
-    if (cleaned.length === 0) {
+    if (cleanedRows.length === 0) {
       throw new Error("没有找到有效的数据行，请检查Excel格式是否正确");
     }
 
-    console.log("数据清理完成，有效行数:", cleaned.length);
-    return cleaned;
+    console.log("数据清理完成，有效行数:", cleanedRows.length);
+
+    // 2. 构建树形结构
+    const tree = this.buildTreeFromRows(cleanedRows);
+
+    // 3. 识别最后两个一级工程
+    this.markLastTwoFirstLevels(tree);
+
+    this.treeData = tree;
+    return tree;
+  }
+
+  // 从数据行构建树形结构
+  buildTreeFromRows(rows) {
+    console.log("开始构建树形结构...");
+
+    // 清空节点映射
+    this.nodeMap.clear();
+
+    // 创建根节点（项目汇总行）
+    const rootNode = {
+      id: "0",
+      code: "0",
+      name: this.projectName,
+      level: 0,
+      parentId: null,
+      children: [],
+      rowData: null,
+      isFirstLevel: false,
+      isLastTwoFirstLevel: false,
+      hasSubcontract: false, // 是否有分包子节点
+      contractAmount: 0, // 合同造价金额无税
+      calcAmount: 0, // 测算金额无税
+      contractAmountTotal: 0, // 总合同金额（含子节点）
+      calcAmountTotal: 0, // 总测算金额（含子节点）
+    };
+
+    this.nodeMap.set("0", rootNode);
+
+    // 处理每一行数据
+    for (const row of rows) {
+      const seq = row.序号;
+
+      // 跳过表头行
+      if (seq === "1" && row.项目名称 === "2") continue;
+      if (seq === "一") continue;
+
+      // 清理序号
+      let cleanSeq = this.cleanSequence(seq);
+      if (this.isChineseNumber(cleanSeq)) {
+        cleanSeq = this.chineseToNumber(cleanSeq);
+      }
+
+      if (!cleanSeq || !this.isValidSequence(cleanSeq)) continue;
+
+      // 格式化编码
+      const formattedCode = this.formatSequenceCode(cleanSeq);
+
+      // 检查是否已经存在该节点
+      if (this.nodeMap.has(formattedCode)) {
+        console.warn(`重复的编码: ${formattedCode}，跳过`);
+        continue;
+      }
+
+      // 解析层级信息
+      const parts = formattedCode.split(".");
+      const level = parts.length - 1;
+
+      // 查找父节点
+      let parentId = "0";
+      if (parts.length > 1) {
+        parentId = parts.slice(0, parts.length - 1).join(".");
+      }
+
+      const parentNode = this.nodeMap.get(parentId);
+      if (!parentNode && parentId !== "0") {
+        console.warn(`找不到父节点 ${parentId}，当前节点: ${formattedCode}`);
+        continue;
+      }
+
+      // 判断是否是一级工程
+      const isFirstLevel = level === 0;
+
+      // 检查是否有分包数据
+      const hasProfSub = row.专业分包 !== null && row.专业分包 !== 0;
+      const hasLaborSub = row.劳务分包 !== null && row.劳务分包 !== 0;
+      const hasSubcontract = hasProfSub || hasLaborSub;
+
+      // 创建节点
+      const node = {
+        id: formattedCode,
+        code: formattedCode,
+        name: row.项目名称,
+        level: level,
+        parentId: parentId,
+        children: [],
+        rowData: row,
+        isFirstLevel: isFirstLevel,
+        isLastTwoFirstLevel: false,
+        hasSubcontract,
+        hasProfSub,
+        hasLaborSub,
+        calcAmountTotal: 0,
+        // 输出列对应项
+        category: row.分包策划分类, //成本科目编码
+        quantity: row.数量, // 测算数量/合同造价数量
+        profSubPrice: row.专业分包, // 测算单价（专业分包）
+        laborSubPrice: row.劳务分包, // 测算单价（劳务分包）
+        calcAmount: 0, // 测算金额无税
+        unit: row.单位, //单位
+        contractPrice: row.合同单价, // 合同造价单价
+        contractAmount: 0, // 合同造价无税金额
+      };
+
+      // 添加到树中
+      this.nodeMap.set(formattedCode, node);
+
+      if (parentId === "0") {
+        rootNode.children.push(node);
+      } else if (parentNode) {
+        parentNode.children.push(node);
+      }
+
+      // 如果需要创建分包节点
+      if (hasSubcontract) {
+        let firstNode = true;
+        // 创建分包节点（劳务分包）
+        if (hasLaborSub) {
+          const subNode = this.createSubcontractNode(
+            node,
+            "劳务分包",
+            "0001",
+            row.劳务分包,
+            firstNode
+          );
+          this.nodeMap.set(subNode.code, subNode);
+          node.children.push(subNode);
+          firstNode = false;
+        }
+
+        // 创建分包节点（专业分包）
+        if (hasProfSub) {
+          const subNode = this.createSubcontractNode(
+            node,
+            "专业分包",
+            "0002",
+            row.专业分包,
+            firstNode
+          );
+          this.nodeMap.set(subNode.code, subNode);
+          node.children.push(subNode);
+        }
+      }
+    }
+
+    // 按编码排序所有子节点
+    this.sortTreeNodes(rootNode);
+
+    console.log("树形结构构建完成，总节点数:", this.nodeMap.size);
+    this.debugTree(rootNode);
+
+    return rootNode;
+  }
+
+  // 创建分包节点
+  createSubcontractNode(parentNode, subType, category, unitPrice, firstNode) {
+    const subCode = firstNode ? "001" : "002";
+    const subId = `${parentNode.code}.${subCode}`;
+    const subName = `${parentNode.name}：${subType}`;
+
+    const subNode = {
+      id: subId,
+      code: subId,
+      name: subName,
+      level: parentNode.level + 1,
+      parentId: parentNode.id,
+      children: [],
+      rowData: null,
+      isFirstLevel: false,
+      isLastTwoFirstLevel: parentNode.isLastTwoFirstLevel,
+      hasSubcontract: false,
+      quantity: parentNode.quantity,
+      contractPrice: 0,
+      unitPrice,
+      subcontractType: subType,
+      // 输出列对应项
+      category, //成本科目编码
+      quantity: parentNode.quantity, // 测算数量/合同造价数量
+      profSubPrice: subType === "专业分包" ? unitPrice : 0, // 测算单价（专业分包）
+      laborSubPrice: subType === "劳务分包" ? unitPrice : 0, // 测算单价（劳务分包）
+      calcAmount: 0, // 测算金额无税
+      unit: parentNode.unit, //单位
+      contractPrice: parentNode.contractPrice, // 合同造价单价
+      contractAmount: 0, // 合同造价无税金额
+    };
+
+    return subNode;
+  }
+
+  // 标记最后两个一级工程
+  markLastTwoFirstLevels(tree) {
+    if (!tree || !tree.children || tree.children.length === 0) {
+      return;
+    }
+
+    // 获取所有一级工程节点
+    const firstLevelNodes = tree.children.filter((node) => node.isFirstLevel);
+
+    // 按编码排序
+    firstLevelNodes.sort((a, b) => {
+      const aNum = parseInt(a.code);
+      const bNum = parseInt(b.code);
+      return aNum - bNum;
+    });
+
+    console.log(
+      "一级工程节点:",
+      firstLevelNodes.map((n) => `${n.code}-${n.name}`)
+    );
+
+    // 标记最后两个一级工程
+    if (firstLevelNodes.length >= 2) {
+      const lastTwo = firstLevelNodes.slice(-2);
+      for (const node of lastTwo) {
+        node.isLastTwoFirstLevel = true;
+        console.log(`标记为最后两个一级工程: ${node.code}-${node.name}`);
+
+        // 同时标记所有子节点
+        this.markAllDescendantsAsLastTwo(node);
+      }
+    }
+  }
+
+  // 标记所有后代节点为最后两个一级工程的子节点
+  markAllDescendantsAsLastTwo(node) {
+    if (!node || !node.children) return;
+
+    for (const child of node.children) {
+      child.isLastTwoFirstLevel = true;
+      this.markAllDescendantsAsLastTwo(child);
+    }
+  }
+
+  // 排序树节点
+  sortTreeNodes(node) {
+    if (!node || !node.children) return;
+
+    node.children.sort((a, b) => this.sortSequence(a.code, b.code));
+
+    for (const child of node.children) {
+      this.sortTreeNodes(child);
+    }
+  }
+
+  // 修复：计算树的金额汇总（深层节点金额向上累加）
+  calculateTreeAmounts(tree) {
+    console.log("开始计算树形结构金额汇总...");
+
+    // 后序遍历树，从叶子节点向上累加金额
+    this.postOrderTraverse(tree, (node) => {
+      // 跳过根节点（在最后处理）
+      if (node.code === "0") return;
+
+      // 对于分包节点，计算测算金额
+      if (node.subcontractType) {
+        node.calcAmount = node.quantity * node.unitPrice;
+      } else {
+        // 对于非分包节点
+        // 1. 计算合同金额总和（子节点的合同金额总和）
+
+        // 若为分包节点的父节点，计算合同金额
+        if (node.hasSubcontract)
+          node.contractAmount = node.quantity * node.contractPrice;
+
+        // 分别计算子节点两个金额的和
+        let childContractTotal = 0;
+        let childCalcTotal = 0;
+
+        for (const child of node.children) {
+          childContractTotal += child.contractAmount || 0;
+          childCalcTotal += child.calcAmount || 0;
+        }
+
+        // 更新节点两个总金额
+        node.contractAmount += childContractTotal;
+        node.calcAmount += childCalcTotal;
+
+        // 如果是最后两个一级工程的节点，不创建分包明细行，但分包金额仍要计算
+        if (node.isLastTwoFirstLevel && node.hasSubcontract) {
+          // 对于最后两个一级工程的节点，分包金额要累加到测算金额中
+          node.calcAmount += node.calcAmount;
+        }
+      }
+    });
+
+    // 处理根节点（项目汇总行）
+    tree.contractAmountTotal = 0;
+    tree.calcAmountTotal = 0;
+
+    for (const child of tree.children) {
+      if (child.isFirstLevel) {
+        tree.contractAmount += child.contractAmount || 0;
+        tree.calcAmount += child.calcAmount || 0;
+      }
+    }
+
+    console.log("树形结构金额计算完成");
+    this.debugTreeAmounts(tree);
+
+    return tree;
+  }
+
+  // 后序遍历树
+  postOrderTraverse(node, callback) {
+    if (!node || !node.children) return;
+
+    // 先遍历子节点
+    for (const child of node.children) {
+      this.postOrderTraverse(child, callback);
+    }
+
+    // 再处理当前节点
+    callback(node);
+  }
+
+  // 从树生成表2格式的数据行
+  generateRowsFromTree(tree) {
+    console.log("从树形结构生成表2数据行...");
+    const rows = [];
+
+    // 前序遍历树，生成数据行（跳过根节点）
+    this.preOrderTraverse(tree, (node) => {
+      // 跳过项目汇总行（单独处理）
+      if (node.code === "0") return;
+
+      // 生成当前节点的数据行
+      const nodeRows = this.generateRowsForNode(node);
+      rows.push(...nodeRows);
+    });
+
+    console.log(`生成数据行完成，总行数: ${rows.length}`);
+    return rows;
+  }
+
+  // 为单个节点生成数据行
+  generateRowsForNode(node) {
+    const rows = [];
+
+    // 1. 生成占位行（如果是分包节点，不生成占位行）
+    if (!node.subcontractType) {
+      const placeholderRow = this.createPlaceholderRowFromNode(node);
+      rows.push(placeholderRow);
+    }
+
+    // 2. 生成分包明细行（如果有分包数据且不是最后两个一级工程的节点）
+    if (node.hasSubcontract && !node.isLastTwoFirstLevel) {
+      const detailRows = this.createDetailRowsFromNode(node);
+      rows.push(...detailRows);
+    }
+
+    return rows;
+  }
+
+  // 从节点创建占位行
+  createPlaceholderRowFromNode(node) {
+    const isSubcontractNode = !!node.subcontractType;
+    const hasSubcontract = node.hasSubcontract && !node.isLastTwoFirstLevel;
+
+    const row = {
+      清单项编码: node.code,
+      层级编码: node.code,
+      清单项名称: node.name,
+      成本科目编码: hasSubcontract ? "" : node.category || "",
+      测算数量: "",
+      测算单价: "",
+      测算金额无税: "",
+      单位: hasSubcontract ? "" : node.unit || "",
+      合同造价数量: "",
+      合同造价单价: "",
+      合同造价无税金额: "",
+    };
+
+    // 如果是分包节点，填充测算数据
+    if (isSubcontractNode) {
+      row.测算数量 = this.formatDecimal(node.quantity);
+      row.测算单价 = this.formatDecimal(
+        node.subcontractType === "专业分包"
+          ? node.profSubPrice
+          : node.laborSubPrice
+      );
+      row.测算金额无税 = this.formatDecimal(node.calcAmount);
+      row.单位 = node.unit || "";
+      row.成本科目编码 = node.category || "";
+    }
+    // 如果是非分包节点
+    else {
+      // 填充合同数据（如果有直接合同数据）
+      if (node.quantity !== null && node.contractPrice !== null) {
+        row.合同造价数量 = this.formatDecimal(node.quantity);
+        row.合同造价单价 = this.formatDecimal(node.contractPrice);
+        row.合同造价无税金额 = this.formatDecimal(node.contractAmount);
+      }
+
+      // 填充合同金额（如果是最后两个一级工程，不显示分包金额）
+      // if (node.directContractAmount && node.directContractAmount > 0) {
+      //   row.合同造价无税金额 = this.formatDecimal(node.directContractAmount);
+      // }
+
+      // 对于非 分包节点或其父节点，显示汇总金额
+      if (!(node.hasSubcontract || node.subcontractType)) {
+        if (node.calcAmount && node.calcAmount > 0) {
+          row.测算金额无税 = this.formatDecimal(node.calcAmount);
+        }
+
+        if (node.contractAmount && node.contractAmount > 0) {
+          row.合同造价无税金额 = this.formatDecimal(node.contractAmount);
+        }
+      }
+    }
+
+    return row;
+  }
+
+  // 从节点创建分包明细行
+  createDetailRowsFromNode(node) {
+    const rows = [];
+    let firstRow = true;
+
+    // 劳务分包
+    if (node.laborSubPrice && node.laborSubPrice > 0) {
+      const laborRow = this.createSubcontractRow(
+        node,
+        "劳务分包",
+        "0001",
+        firstRow
+      );
+      rows.push(laborRow);
+      firstRow = false;
+    }
+
+    // 专业分包
+    if (node.profSubPrice && node.profSubPrice > 0) {
+      const profRow = this.createSubcontractRow(
+        node,
+        "专业分包",
+        "0002",
+        firstRow
+      );
+      rows.push(profRow);
+    }
+
+    return rows;
+  }
+
+  // 创建分包行
+  createSubcontractRow(node, subType, category, firstRow) {
+    const subCode = firstRow ? "001" : "002";
+    const subId = `${node.code}.${subCode}`;
+    const subName = `${node.name}：${subType}`;
+
+    const unitPrice =
+      subType === "专业分包" ? node.profSubPrice : node.laborSubPrice;
+    const calcAmount =
+      node.quantity !== null && unitPrice !== null
+        ? node.quantity * unitPrice
+        : 0;
+
+    return {
+      清单项编码: subId,
+      层级编码: subId,
+      清单项名称: subName,
+      成本科目编码: category,
+      测算数量: this.formatDecimal(node.quantity),
+      测算单价: this.formatDecimal(unitPrice),
+      测算金额无税: this.formatDecimal(calcAmount),
+      单位: node.unit || "",
+      合同造价数量: "",
+      合同造价单价: "",
+      合同造价无税金额: "",
+    };
+  }
+
+  // 前序遍历树
+  preOrderTraverse(node, callback) {
+    if (!node) return;
+
+    callback(node);
+
+    if (!node.children) return;
+
+    for (const child of node.children) {
+      this.preOrderTraverse(child, callback);
+    }
   }
 
   // 转换表1到表2
@@ -159,440 +641,96 @@ class ExcelConverter {
       throw new Error("Excel数据格式不正确");
     }
 
-    console.log("开始转换数据...");
+    console.log("开始转换数据（树形结构修复版）...");
 
-    // 清理数据
-    const cleanData = this.cleanSheet1Data(this.sheet1Data);
+    // 1. 清理数据并构建树形结构
+    const tree = this.cleanSheet1DataAndBuildTree(this.sheet1Data);
 
-    // 执行转换
-    const sheet2Rows = this.performConversion(cleanData);
+    // 2. 计算金额汇总（修复深层节点金额汇总）
+    const treeWithAmounts = this.calculateTreeAmounts(tree);
 
-    // 计算汇总
-    const finalData = this.calculateSummaryAmounts(sheet2Rows);
+    console.log(treeWithAmounts);
 
-    this.sheet2Data = finalData;
+    // 3. 从树生成表2数据行
+    const sheet2Rows = this.generateRowsFromTree(treeWithAmounts);
+
+    // 4. 确保项目汇总行在最前面
+    const projectSummaryRow =
+      this.createPlaceholderRowFromNode(treeWithAmounts);
+    const finalRows = [projectSummaryRow, ...sheet2Rows];
+
+    // 5. 对最终行进行排序
+    finalRows.sort((a, b) => this.sortSequence(a.清单项编码, b.清单项编码));
+
+    this.sheet2Data = finalRows;
     this.endTime = new Date();
 
     const processTime = (this.endTime - this.startTime) / 1000;
     console.log(
-      `转换完成！总行数: ${finalData.length}, 耗时: ${processTime.toFixed(2)}秒`
+      `转换完成！总行数: ${finalRows.length}, 耗时: ${processTime.toFixed(2)}秒`
     );
 
-    return finalData;
+    return finalRows;
   }
 
-  // 执行转换逻辑
-  performConversion(data) {
-    const rows = [];
+  // ========== 辅助方法 ==========
 
-    // 第一行：项目汇总行
-    rows.push(this.createPlaceholderRow("0", "0", this.projectName, ""));
+  // 调试：打印树结构
+  debugTree(node, depth = 0) {
+    if (!node) return;
 
-    // 分组数据：按一级工程分组
-    const groupedByFirstLevel = this.groupDataByFirstLevel(data);
+    const indent = "  ".repeat(depth);
+    console.log(`${indent}${node.code} - ${node.name} (L${node.level})`);
 
-    // 处理每个一级工程组
-    for (const [firstLevelCode, groupData] of Object.entries(
-      groupedByFirstLevel
-    )) {
-      // 找出该组中所有二级工程（排除材料、机械、其他费用等）
-      const subProjects = this.extractSubProjects(groupData);
-
-      // 计算需要特殊处理的二级工程数量
-      const totalSubProjects = subProjects.length;
-
-      // 处理该组中的每一行
-      for (const row of groupData) {
-        const seq = row.序号;
-        const name = row.项目名称;
-        const category = row.分包策划分类;
-        const unit = row.单位.replace("m3", "立方米").replace("M3", "立方米");
-
-        const quantity = row.数量;
-        const contractPrice = row.合同单价;
-        const profSub = row.专业分包;
-        const laborSub = row.劳务分包;
-
-        // 跳过表头行
-        if (seq === "1" && name === "2") continue;
-        if (seq === "一") continue;
-
-        // 处理中文序号
-        let cleanSeq = this.cleanSequence(seq);
-        if (this.isChineseNumber(cleanSeq)) {
-          cleanSeq = this.chineseToNumber(cleanSeq);
-        }
-
-        if (!cleanSeq || !this.isValidSequence(cleanSeq)) continue;
-
-        // 获取当前行的二级工程信息
-        const currentSubProject = this.getSubProjectInfo(cleanSeq, subProjects);
-        const subProjectIndex = currentSubProject
-          ? subProjects.findIndex((sp) => sp.code === currentSubProject.code)
-          : -1;
-
-        // 判断是否为倒数第一或第二的二级工程
-        const isLastTwo =
-          subProjectIndex >= totalSubProjects - 2 && subProjectIndex >= 0;
-
-        const hasProfSub = profSub !== null && profSub !== 0;
-        const hasLaborSub = laborSub !== null && laborSub !== 0;
-
-        // 调试信息
-        console.log(
-          `行: ${cleanSeq}, 名称: ${name}, 是否为倒数两个: ${isLastTwo}, 专业分包: ${hasProfSub}, 劳务分包: ${hasLaborSub}`
-        );
-
-        // 创建行逻辑
-        if (isLastTwo) {
-          // 倒数两个二级工程：只创建占位行，不创建分包明细行
-          rows.push(this.createPlaceholderRow(cleanSeq, name, category));
-        } else if (hasProfSub || hasLaborSub) {
-          // 非倒数两个且有分包数据：创建占位行+分包明细行
-          rows.push(this.createPlaceholderRow(cleanSeq, name, category));
-
-          if (hasProfSub) {
-            console.log(`创建专业分包行: ${cleanSeq}, 金额: ${profSub}`);
-            rows.push(
-              this.createDetailRow(
-                cleanSeq,
-                name,
-                "专业分包",
-                "0002",
-                quantity,
-                profSub,
-                contractPrice,
-                unit
-              )
-            );
-          }
-
-          if (hasLaborSub) {
-            console.log(`创建劳务分包行: ${cleanSeq}, 金额: ${laborSub}`);
-            rows.push(
-              this.createDetailRow(
-                cleanSeq,
-                name,
-                "劳务分包",
-                "0001",
-                quantity,
-                laborSub,
-                contractPrice,
-                unit
-              )
-            );
-          }
-        } else {
-          // 普通行：只创建占位行
-          rows.push(this.createPlaceholderRow(cleanSeq, name, category));
-        }
+    if (node.children && node.children.length > 0) {
+      for (const child of node.children) {
+        this.debugTree(child, depth + 1);
       }
     }
-
-    console.log("基础转换完成，总行数:", rows.length);
-    return rows;
   }
 
-  // 按一级工程分组数据
-  groupDataByFirstLevel(data) {
-    const groups = {};
-    let currentGroup = null;
+  // 调试：打印树金额
+  debugTreeAmounts(node, depth = 0) {
+    if (!node) return;
 
-    for (const row of data) {
-      const seq = row.序号;
-      const cleanSeq = this.cleanSequence(seq);
-
-      // 检查是否是一级工程（如"一"、"二"等）
-      if (this.isFirstLevelSequence(cleanSeq)) {
-        currentGroup = cleanSeq;
-        if (!groups[currentGroup]) {
-          groups[currentGroup] = [];
-        }
-      }
-
-      if (
-        currentGroup &&
-        seq !== "一" &&
-        !(seq === "1" && row.项目名称 === "2")
-      ) {
-        groups[currentGroup].push(row);
-      }
-    }
-
-    console.log("按一级工程分组完成:", Object.keys(groups));
-    return groups;
-  }
-
-  // 判断是否是一级工程序号
-  isFirstLevelSequence(seq) {
-    if (!seq) return false;
-
-    // 中文数字的一级工程
-    if (this.isChineseNumber(seq)) {
-      const num = this.chineseToNumber(seq);
-      return /^\d+$/.test(num) && !seq.includes(".");
-    }
-
-    // 阿拉伯数字的一级工程（如"1"、"2"等，但不包括"1.1"）
-    return /^\d+$/.test(seq) && !seq.includes(".");
-  }
-
-  // 提取二级工程信息
-  extractSubProjects(groupData) {
-    const subProjects = [];
-
-    for (const row of groupData) {
-      const seq = row.序号;
-      const cleanSeq = this.cleanSequence(seq);
-
-      // 跳过一级工程行
-      if (this.isFirstLevelSequence(cleanSeq)) continue;
-
-      // 检查是否是二级工程（如"1.1"、"1.2"等）
-      const parts = cleanSeq.split(".");
-      if (
-        parts.length === 2 &&
-        /^\d+$/.test(parts[0]) &&
-        /^\d+$/.test(parts[1])
-      ) {
-        // 检查是否是倒数两个工程部分（材料、机械、其他费用等）
-        const isLastTwoParts = this.isLastTwoParts(cleanSeq, groupData);
-
-        if (!isLastTwoParts) {
-          const seqNum = parseInt(parts[1]);
-          subProjects.push({
-            code: cleanSeq,
-            name: row.项目名称,
-            seqNum: seqNum,
-          });
-        }
-      }
-    }
-
-    // 按序号排序
-    subProjects.sort((a, b) => a.seqNum - b.seqNum);
+    const indent = "  ".repeat(depth);
+    const totalContract = node.contractAmount
+      ? `总合同=${node.contractAmount}`
+      : "";
+    const totalCalc = node.calcAmount ? `总测算=${node.calcAmount}` : "";
+    const lastTwoStr = node.isLastTwoFirstLevel ? "[最后两个]" : "";
+    const subStr = node.subcontractType ? `[分包:${node.subcontractType}]` : "";
 
     console.log(
-      `提取二级工程: ${subProjects.length}个`,
-      subProjects.map((sp) => sp.code)
+      `${indent}${node.code} - ${node.name}:  ${totalContract} ${totalCalc} ${lastTwoStr} ${subStr}`
     );
-    return subProjects;
-  }
 
-  // 判断是否是倒数两个工程部分
-  isLastTwoParts(seq, groupData) {
-    const parts = seq.split(".");
-    if (parts.length !== 2) return false;
-
-    const firstLevel = parts[0];
-    const secondLevel = parseInt(parts[1]);
-
-    // 找出该一级工程下的所有二级工程序号
-    const secondLevels = new Set();
-
-    for (const row of groupData) {
-      const rowSeq = row.序号;
-      const cleanRowSeq = this.cleanSequence(rowSeq);
-      const rowParts = cleanRowSeq.split(".");
-
-      if (rowParts.length === 2 && rowParts[0] === firstLevel) {
-        const num = parseInt(rowParts[1]);
-        if (!isNaN(num)) {
-          secondLevels.add(num);
-        }
+    if (node.children && node.children.length > 0) {
+      for (const child of node.children) {
+        this.debugTreeAmounts(child, depth + 1);
       }
     }
-
-    // 转换为数组并排序
-    const sortedLevels = Array.from(secondLevels).sort((a, b) => a - b);
-
-    // 判断是否是最大的两个数字
-    if (sortedLevels.length >= 2) {
-      const maxTwo = sortedLevels.slice(-2);
-      return maxTwo.includes(secondLevel);
-    }
-
-    return false;
   }
 
-  // 获取二级工程信息
-  getSubProjectInfo(seq, subProjects) {
-    const parts = seq.split(".");
-    if (parts.length === 2) {
-      return subProjects.find((sp) => sp.code === seq);
-    }
-    return null;
-  }
-
-  // 格式化序列编码（第一层保持原样，其他层补0到3位）
+  // 格式化序列编码
   formatSequenceCode(seq) {
     if (!seq || seq === "") return seq;
 
     const parts = seq.split(".");
 
-    // 第一个层级保持原样，其他层级补0到3位
     const formattedParts = parts.map((part, index) => {
       if (index === 0) {
-        return part; // 第一层保持原样
+        return part;
       }
 
-      // 确保是数字，不是数字的直接返回
       if (!/^\d+$/.test(part)) {
         return part;
       }
 
-      // 补0到3位
       return part.padStart(3, "0");
     });
 
     return formattedParts.join(".");
-  }
-
-  // 创建占位行
-  createPlaceholderRow(seq, name, category) {
-    // 格式化编码
-    const formattedSeq = this.formatSequenceCode(seq);
-
-    return {
-      清单项编码: formattedSeq,
-      层级编码: formattedSeq,
-      清单项名称: name,
-      成本科目编码: category,
-      测算数量: "",
-      测算单价: "",
-      测算金额无税: "",
-      单位: "",
-      合同造价数量: "",
-      合同造价单价: "",
-      合同造价无税金额: "",
-    };
-  }
-
-  // 创建分包明细行
-  createDetailRow(
-    parentSeq,
-    name,
-    subType,
-    categoryCode,
-    quantity,
-    unitPrice,
-    contractPrice,
-    unit
-  ) {
-    // 格式化父级编码
-    const formattedParentSeq = this.formatSequenceCode(parentSeq);
-
-    // 统一分包编码为 .001
-    const subCode = "001";
-    const subSeq = `${formattedParentSeq}.${subCode}`;
-    const subName = `${name}：${subType}`;
-
-    // 成本科目编码：劳务分包=0001，专业分包=0002
-    const correctCategoryCode = subType === "劳务分包" ? "0001" : "0002";
-
-    const calcAmount =
-      quantity !== null && unitPrice !== null ? quantity * unitPrice : null;
-    const contractAmount =
-      quantity !== null && contractPrice !== null
-        ? quantity * contractPrice
-        : null;
-
-    return {
-      清单项编码: subSeq,
-      层级编码: subSeq,
-      清单项名称: subName,
-      成本科目编码: correctCategoryCode,
-      测算数量: this.formatDecimal(quantity),
-      测算单价: this.formatDecimal(unitPrice),
-      测算金额无税: this.formatDecimal(calcAmount),
-      单位: unit,
-      合同造价数量: this.formatDecimal(quantity),
-      合同造价单价: this.formatDecimal(contractPrice),
-      合同造价无税金额: this.formatDecimal(contractAmount),
-    };
-  }
-
-  // 计算汇总金额
-  calculateSummaryAmounts(rows) {
-    console.log("开始计算汇总金额...");
-
-    // 分离明细行和汇总行
-    const detailRows = rows.filter((row) => row.清单项编码.endsWith(".001"));
-    const summaryRows = rows.filter((row) => !row.清单项编码.endsWith(".001"));
-
-    const summaryDict = {};
-
-    // 计算每个层级的汇总
-    for (const detail of detailRows) {
-      const seq = detail.清单项编码;
-      const calcAmount = this.parseNumber(detail.测算金额无税);
-      const contractAmount = this.parseNumber(detail.合同造价无税金额);
-
-      // 获取父级编码（移除最后的.001）
-      const parentSeq = seq.slice(0, -4);
-      const parts = parentSeq.split(".");
-
-      // 为每一级父级累加金额
-      for (let i = 1; i <= parts.length; i++) {
-        const levelSeq = parts.slice(0, i).join(".");
-        if (!summaryDict[levelSeq]) {
-          summaryDict[levelSeq] = { 测算: 0, 合同: 0 };
-        }
-
-        if (calcAmount !== null) {
-          summaryDict[levelSeq].测算 += calcAmount;
-        }
-        if (contractAmount !== null) {
-          summaryDict[levelSeq].合同 += contractAmount;
-        }
-      }
-    }
-
-    // 更新汇总行的金额
-    const resultRows = [];
-
-    for (const summary of summaryRows) {
-      const seq = summary.清单项编码;
-      const row = { ...summary };
-
-      // 如果有汇总金额，更新对应字段
-      if (summaryDict[seq]) {
-        if (!row.测算金额无税 || row.测算金额无税 === "") {
-          row.测算金额无税 = this.formatDecimal(summaryDict[seq].测算);
-        }
-        if (!row.合同造价无税金额 || row.合同造价无税金额 === "") {
-          row.合同造价无税金额 = this.formatDecimal(summaryDict[seq].合同);
-        }
-      }
-
-      // 特殊处理总项目行（编码0）
-      if (seq === "0") {
-        let totalCalc = 0;
-        let totalContract = 0;
-
-        // 汇总所有一级编码的金额
-        for (const key in summaryDict) {
-          if (key !== "0" && !key.includes(".") && /^\d+$/.test(key)) {
-            totalCalc += summaryDict[key].测算 || 0;
-            totalContract += summaryDict[key].合同 || 0;
-          }
-        }
-
-        row.测算金额无税 = this.formatDecimal(totalCalc);
-        row.合同造价无税金额 = this.formatDecimal(totalContract);
-      }
-
-      resultRows.push(row);
-    }
-
-    // 添加明细行
-    resultRows.push(...detailRows);
-
-    // 排序
-    resultRows.sort((a, b) => this.sortSequence(a.清单项编码, b.清单项编码));
-
-    console.log("汇总计算完成，最终行数:", resultRows.length);
-    return resultRows;
   }
 
   // 清理序号
@@ -600,7 +738,6 @@ class ExcelConverter {
     if (typeof seq !== "string") {
       seq = String(seq || "");
     }
-    // 移除括号和空格，但要保留小数点
     return seq.replace(/[（）()\s、]/g, "");
   }
 
@@ -629,12 +766,10 @@ class ExcelConverter {
       十: "10",
     };
 
-    // 处理简单的中文数字
     if (simpleMap[text]) {
       return simpleMap[text];
     }
 
-    // 尝试处理复杂的（如"十一"、"二十"等）
     if (text.length === 2 && text.endsWith("十")) {
       const first = simpleMap[text[0]];
       if (first) return first + "0";
@@ -651,7 +786,6 @@ class ExcelConverter {
   // 检查序号是否有效
   isValidSequence(seq) {
     if (!seq) return false;
-    // 允许数字和点，但不能以点开头或结尾，不能连续两个点
     return /^(\d+(\.\d+)*)$/.test(seq);
   }
 
@@ -671,7 +805,6 @@ class ExcelConverter {
     }
 
     if (typeof value === "string") {
-      // 清理字符串中的非数字字符（保留小数点、负号）
       const cleaned = value.replace(/[^\d.-]/g, "");
       if (cleaned === "" || cleaned === "-" || cleaned === ".") {
         return null;
@@ -692,14 +825,11 @@ class ExcelConverter {
     const num = Number(value);
     if (isNaN(num)) return "";
 
-    // 四舍五入到指定小数位
     const multiplier = Math.pow(10, decimals);
     const rounded = Math.round(num * multiplier) / multiplier;
 
-    // 格式化，移除末尾的0
     let formatted = rounded.toFixed(decimals);
 
-    // 移除末尾的0和小数点
     while (
       formatted.includes(".") &&
       (formatted.endsWith("0") || formatted.endsWith("."))
@@ -716,11 +846,7 @@ class ExcelConverter {
     if (!a) return -1;
     if (!b) return 1;
 
-    // 将编码拆分为部分，每部分补0到3位以便排序
-    const normalizePart = (part, index) => {
-      // 第一层也补0到3位方便排序，但显示时保持原样
-      return part.padStart(3, "0");
-    };
+    const normalizePart = (part) => part.padStart(3, "0");
 
     const partsA = a.split(".").map(normalizePart);
     const partsB = b.split(".").map(normalizePart);
@@ -729,9 +855,7 @@ class ExcelConverter {
       const partA = partsA[i] || "000";
       const partB = partsB[i] || "000";
 
-      if (partA !== partB) {
-        return partA.localeCompare(partB);
-      }
+      if (partA !== partB) return partA.localeCompare(partB);
     }
 
     return 0;
@@ -746,7 +870,6 @@ class ExcelConverter {
     try {
       console.log("开始生成Excel文件...");
 
-      // 准备工作表数据
       const sheetData = [
         [
           "清单项编码",
@@ -763,7 +886,6 @@ class ExcelConverter {
         ],
       ];
 
-      // 添加数据行
       for (const row of data) {
         sheetData.push([
           row.清单项编码 || "",
@@ -780,30 +902,26 @@ class ExcelConverter {
         ]);
       }
 
-      // 创建工作表
       const worksheet = XLSX.utils.aoa_to_sheet(sheetData);
 
-      // 设置列宽
       const colWidths = [
-        { wch: 15 }, // 清单项编码
-        { wch: 15 }, // 层级编码
-        { wch: 40 }, // 清单项名称
-        { wch: 12 }, // 成本科目编码
-        { wch: 12 }, // 测算数量
-        { wch: 12 }, // 测算单价
-        { wch: 15 }, // 测算金额无税
-        { wch: 8 }, // 单位
-        { wch: 12 }, // 合同造价数量
-        { wch: 12 }, // 合同造价单价
-        { wch: 15 }, // 合同造价无税金额
+        { wch: 15 },
+        { wch: 15 },
+        { wch: 40 },
+        { wch: 12 },
+        { wch: 12 },
+        { wch: 12 },
+        { wch: 15 },
+        { wch: 8 },
+        { wch: 12 },
+        { wch: 12 },
+        { wch: 15 },
       ];
       worksheet["!cols"] = colWidths;
 
-      // 设置表格样式
       if (sheetData.length > 1) {
         const range = XLSX.utils.decode_range(worksheet["!ref"]);
 
-        // 设置表头样式
         for (let col = range.s.c; col <= range.e.c; col++) {
           const cellAddress = XLSX.utils.encode_cell({ r: 0, c: col });
           if (worksheet[cellAddress]) {
@@ -815,7 +933,6 @@ class ExcelConverter {
           }
         }
 
-        // 设置数据区域边框
         for (let row = range.s.r + 1; row <= range.e.r; row++) {
           for (let col = range.s.c; col <= range.e.c; col++) {
             const cellAddress = XLSX.utils.encode_cell({ r: row, c: col });
@@ -834,11 +951,9 @@ class ExcelConverter {
         }
       }
 
-      // 创建工作簿
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, "转换结果");
 
-      // 导出文件
       console.log("正在导出文件:", filename);
       XLSX.writeFile(workbook, filename);
 
@@ -888,9 +1003,108 @@ class ExcelConverter {
   reset() {
     this.workbook = null;
     this.sheet1Data = null;
-    this.sheet2Data = null;
+    this.treeData = null;
+    this.nodeMap.clear();
     this.projectName = "项目一";
     this.startTime = null;
     this.endTime = null;
+  }
+
+  // 测试深层节点金额汇总
+  testDeepLevelAmounts() {
+    console.log("=== 测试深层节点金额汇总 ===");
+
+    const mockRows = [
+      { 序号: "一", 项目名称: "项目一" },
+      { 序号: "1", 项目名称: "工程1" },
+      { 序号: "1.1", 项目名称: "分部1.1" },
+      {
+        序号: "1.1.1",
+        项目名称: "分项1.1.1",
+        单位: "m3",
+        数量: 10,
+        合同单价: 100,
+        专业分包: 80,
+        劳务分包: null,
+      },
+      {
+        序号: "1.1.2",
+        项目名称: "分项1.1.2",
+        单位: "m3",
+        数量: 20,
+        合同单价: 200,
+        专业分包: null,
+        劳务分包: 150,
+      },
+      {
+        序号: "1.2",
+        项目名称: "分部1.2",
+        单位: "m3",
+        数量: 30,
+        合同单价: 300,
+        专业分包: null,
+        劳务分包: 250,
+      },
+      { 序号: "2", 项目名称: "工程2" },
+      {
+        序号: "2.1",
+        项目名称: "分部2.1",
+        单位: "个",
+        数量: 40,
+        合同单价: 400,
+        专业分包: 350,
+        劳务分包: null,
+      },
+      { 序号: "5", 项目名称: "材料机械", 分包策划分类: "0003" },
+      { 序号: "6", 项目名称: "其他费用" },
+    ];
+
+    const tree = this.buildTreeFromRows(mockRows);
+    this.markLastTwoFirstLevels(tree);
+    const treeWithAmounts = this.calculateTreeAmounts(tree);
+
+    console.log("\n金额汇总结果:");
+    this.debugTreeAmounts(treeWithAmounts);
+
+    // 验证深层节点金额
+    const node1_1 = this.nodeMap.get("1.001");
+    const node1 = this.nodeMap.get("1");
+
+    console.log("\n验证结果:");
+    console.log(
+      `分项1.1.1 + 分项1.1.2 合同金额: ${10 * 100 + 20 * 200} = ${
+        node1_1?.contractAmountTotal
+      }`
+    );
+    console.log(
+      `分部1.1 + 分部1.2 合同金额: ${10 * 100 + 20 * 200 + 30 * 300} = ${
+        node1?.contractAmountTotal
+      }`
+    );
+    console.log(
+      `分项1.1.1 分包测算: ${10 * 80} = ${
+        this.nodeMap.get("1.001.001.001")?.calcAmountTotal
+      }`
+    );
+    console.log(
+      `分项1.1.2 分包测算: ${20 * 150} = ${
+        this.nodeMap.get("1.001.002.001")?.calcAmountTotal
+      }`
+    );
+    console.log(
+      `工程1 总测算金额: ${10 * 80 + 20 * 150 + 30 * 250} = ${
+        node1?.calcAmountTotal
+      }`
+    );
+
+    const passed =
+      node1_1?.contractAmountTotal === 5000 && // 10*100 + 20*200
+      node1?.contractAmountTotal === 14000 && // 5000 + 30*300
+      node1?.calcAmountTotal === 12800; // 10*80 + 20*150 + 30*250
+
+    console.log(
+      passed ? "✅ 深层节点金额汇总测试通过" : "❌ 深层节点金额汇总测试失败"
+    );
+    return passed;
   }
 }
