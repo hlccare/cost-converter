@@ -4,7 +4,7 @@
 
 ## 🌐 在线演示
 
-访问地址：https://hlccare.github.io/cost-converter-web/
+访问地址：https://hlccare.github.io/cost-converter/
 
 ## 🚀 特性
 
