@@ -8,6 +8,7 @@ class ExcelConverter {
     this.startTime = null;
     this.endTime = null;
     this.nodeMap = new Map(); // 用于快速查找节点
+    this.nzhcn = Nzh.cn;
   }
 
   // 读取Excel文件（保持不变）
@@ -752,35 +753,7 @@ class ExcelConverter {
   chineseToNumber(text) {
     if (!text) return text;
 
-    const simpleMap = {
-      零: "0",
-      一: "1",
-      二: "2",
-      三: "3",
-      四: "4",
-      五: "5",
-      六: "6",
-      七: "7",
-      八: "8",
-      九: "9",
-      十: "10",
-    };
-
-    if (simpleMap[text]) {
-      return simpleMap[text];
-    }
-
-    if (text.length === 2 && text.endsWith("十")) {
-      const first = simpleMap[text[0]];
-      if (first) return first + "0";
-    }
-
-    if (text.length === 2 && text.startsWith("十")) {
-      const second = simpleMap[text[1]];
-      if (second) return "1" + second;
-    }
-
-    return text;
+    return this.nzhcn.decodeS(text, { outputString: true }).toString();
   }
 
   // 检查序号是否有效
