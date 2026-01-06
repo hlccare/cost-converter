@@ -719,11 +719,7 @@ class ExcelConverter {
 
     const parts = seq.split(".");
 
-    const formattedParts = parts.map((part, index) => {
-      if (index === 0) {
-        return part;
-      }
-
+    const formattedParts = parts.map((part) => {
       if (!/^\d+$/.test(part)) {
         return part;
       }
