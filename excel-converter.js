@@ -537,6 +537,7 @@ class ExcelConverter {
     else {
       // 填充合同数据（如果有直接合同数据）
       if (node.quantity !== null && node.contractPrice !== null) {
+        row.单位 = node.unit || "";
         row.合同造价数量 = this.formatDecimal(node.quantity);
         row.合同造价单价 = this.formatDecimal(node.contractPrice);
         row.合同造价无税金额 = this.formatDecimal(node.contractAmount);
