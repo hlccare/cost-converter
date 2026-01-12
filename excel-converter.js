@@ -115,6 +115,8 @@ class ExcelConverter {
           合同单价: this.parseNumber(row[7]),
           专业分包: this.parseNumber(row[8]),
           劳务分包: this.parseNumber(row[9]),
+          主组织: String(row[10] || "").trim(),
+          主键号: String(row[11] || "").trim(),
           原始行数据: row,
         };
 
@@ -174,6 +176,8 @@ class ExcelConverter {
       calcAmount: 0, // 测算金额无税
       contractAmountTotal: 0, // 总合同金额（含子节点）
       calcAmountTotal: 0, // 总测算金额（含子节点）
+      mainOrg: "",
+      mainKey: "",
     };
 
     this.nodeMap.set("0", rootNode);
@@ -184,7 +188,11 @@ class ExcelConverter {
 
       // 跳过表头行
       if (seq === "1" && row.项目名称 === "2") continue;
-      if (seq === "一") continue;
+      if (seq === "一") {
+        rootNode.mainOrg = row.主组织;
+        rootNode.mainKey = row.主键号;
+        continue;
+      }
 
       // 清理序号
       let cleanSeq = this.cleanSequence(seq);
@@ -251,6 +259,8 @@ class ExcelConverter {
         unit: row.单位, //单位
         contractPrice: row.合同单价, // 合同造价单价
         contractAmount: 0, // 合同造价无税金额
+        mainOrg: row.主组织, // 主组织
+        mainKey: row.主键号, // 主键号
       };
 
       // 添加到树中
@@ -519,6 +529,8 @@ class ExcelConverter {
       合同造价数量: "",
       合同造价单价: "",
       合同造价无税金额: "",
+      主组织: node.mainOrg || "",
+      主键号: node.mainKey || "",
     };
 
     // 如果是分包节点，填充测算数据
@@ -853,6 +865,8 @@ class ExcelConverter {
           "合同造价数量",
           "合同造价单价",
           "合同造价无税金额",
+          "主组织",
+          "主键号",
         ],
       ];
 
@@ -869,6 +883,8 @@ class ExcelConverter {
           row.合同造价数量 || "",
           row.合同造价单价 || "",
           row.合同造价无税金额 || "",
+          row.主组织 || "",
+          row.主键号 || "",
         ]);
       }
 
@@ -886,6 +902,8 @@ class ExcelConverter {
         { wch: 12 },
         { wch: 12 },
         { wch: 15 },
+        { wch: 15 },
+        { wch: 25 },
       ];
       worksheet["!cols"] = colWidths;
 
