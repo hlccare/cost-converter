@@ -419,8 +419,11 @@ class ExcelConverter {
         // 对于非分包节点
         // 1. 计算合同金额总和（子节点的合同金额总和）
 
-        // 若为分包节点的父节点，计算合同金额
-        if (node.hasSubcontract)
+        // 若为分包节点的父节点或有价格的叶子节点，计算合同金额
+        if (
+          node.hasSubcontract ||
+          (node.children.length === 0 && node.contractPrice)
+        )
           node.contractAmount = node.quantity * node.contractPrice;
 
         // 分别计算子节点两个金额的和
