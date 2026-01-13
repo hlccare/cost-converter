@@ -14,7 +14,6 @@
       rel="stylesheet"
       href="https://unpkg.com/bootstrap-icons@1.10.0/font/bootstrap-icons.css"
     />
-    />
     <!-- 自定义样式 -->
     <link rel="stylesheet" href="style.css" />
     <!-- SheetJS (用于Excel处理) -->
@@ -58,7 +57,7 @@
         <i class="bi bi-file-earmark-excel text-primary"></i> Excel表格转换
       </h1>
       <p class="text-center text-muted mb-5">
-        上传您的Excel文件，系统将自动转换为表2格式（完全本地处理）
+        上传您的Excel文件，系统将自动转换（完全本地处理）
       </p>
 
       <!-- 上传区域 -->
@@ -67,6 +66,23 @@
           <h4 class="mb-0"><i class="bi bi-upload"></i> 上传文件</h4>
         </div>
         <div class="card-body">
+          <!-- 下载模板按钮 -->
+          <div class="text-center mb-4">
+            <a
+              href="./public/file/模板.xls"
+              class="btn btn-outline-primary btn-lg"
+              id="downloadTemplateBtn"
+              download="模板.xls"
+            >
+              <i class="bi bi-download"></i> 下载Excel模板
+            </a>
+            <p class="text-muted mt-2 small">
+              下载标准模板文件，按照模板格式填写数据后上传转换
+            </p>
+          </div>
+
+          <hr class="my-4" />
+
           <!-- 拖放上传区域 -->
           <div
             class="upload-area text-center p-5 border rounded"
@@ -240,6 +256,7 @@
                 <li>支持 .xls 和 .xlsx 格式</li>
                 <li>文件大小不超过20MB</li>
                 <li>确保文件格式符合模板要求</li>
+                <li>可以使用上方的"下载Excel模板"按钮获取标准模板</li>
               </ul>
             </div>
             <div class="col-md-6">
@@ -250,6 +267,7 @@
                 <li>文件处理完成后请及时下载结果</li>
                 <li>大文件转换可能需要一些时间</li>
                 <li>建议使用Chrome或Edge浏览器</li>
+                <li>首次使用建议先下载模板查看格式要求</li>
               </ul>
             </div>
           </div>
@@ -266,7 +284,7 @@
             <p class="mb-0">基于 SheetJS 的纯前端Excel转换工具</p>
           </div>
           <div class="col-md-6 text-md-end">
-            <p class="mb-0">© 2024 成本表转换工具 | 完全本地处理，保护隐私</p>
+            <p class="mb-0">© 2026 成本表转换工具 | 完全本地处理，保护隐私</p>
           </div>
         </div>
       </div>
