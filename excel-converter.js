@@ -49,12 +49,12 @@ class ExcelConverter {
 
           const sheetNames = this.workbook.SheetNames;
           const targetSheet = sheetNames.find(
-            (name) => name.includes("表1") || name === "表1"
+            (name) => name.includes("表1") || name === "表1",
           );
 
           if (!targetSheet) {
             throw new Error(
-              'Excel文件中没有找到"表1"工作表，请确保工作表名称正确'
+              'Excel文件中没有找到"表1"工作表，请确保工作表名称正确',
             );
           }
 
@@ -65,7 +65,7 @@ class ExcelConverter {
               defval: "",
               raw: false,
               dateNF: "yyyy-mm-dd",
-            }
+            },
           );
 
           console.log("Excel文件读取成功，数据行数:", this.sheet1Data.length);
@@ -282,7 +282,7 @@ class ExcelConverter {
             "劳务分包",
             "0001",
             row.劳务分包,
-            firstNode
+            firstNode,
           );
           this.nodeMap.set(subNode.code, subNode);
           node.children.push(subNode);
@@ -296,7 +296,7 @@ class ExcelConverter {
             "专业分包",
             "0002",
             row.专业分包,
-            firstNode
+            firstNode,
           );
           this.nodeMap.set(subNode.code, subNode);
           node.children.push(subNode);
@@ -366,7 +366,7 @@ class ExcelConverter {
 
     console.log(
       "一级工程节点:",
-      firstLevelNodes.map((n) => `${n.code}-${n.name}`)
+      firstLevelNodes.map((n) => `${n.code}-${n.name}`),
     );
 
     // 标记最后两个一级工程
@@ -414,7 +414,11 @@ class ExcelConverter {
 
       // 对于分包节点，计算测算金额
       if (node.subcontractType) {
-        node.calcAmount = node.quantity * node.unitPrice;
+        if (node.isLastTwoFirstLevel) {
+          node.calcAmount = node.unitPrice;
+        } else {
+          node.calcAmount = node.quantity * node.unitPrice;
+        }
       } else {
         // 对于非分包节点
         // 1. 计算合同金额总和（子节点的合同金额总和）
@@ -440,10 +444,10 @@ class ExcelConverter {
         node.calcAmount += childCalcTotal;
 
         // 如果是最后两个一级工程的节点，不创建分包明细行，但分包金额仍要计算
-        if (node.isLastTwoFirstLevel && node.hasSubcontract) {
-          // 对于最后两个一级工程的节点，分包金额要累加到测算金额中
-          node.calcAmount += node.calcAmount;
-        }
+        // if (node.isLastTwoFirstLevel && node.hasSubcontract) {
+        // 对于最后两个一级工程的节点，分包金额要累加到测算金额中
+        // node.calcAmount += node.calcAmount;
+        // }
       }
     });
 
@@ -518,13 +522,15 @@ class ExcelConverter {
   // 从节点创建占位行
   createPlaceholderRowFromNode(node) {
     const isSubcontractNode = !!node.subcontractType;
-    const hasSubcontract = node.hasSubcontract && !node.isLastTwoFirstLevel;
+    // const hasSubcontract = node.hasSubcontract && !node.isLastTwoFirstLevel;
+    const hasSubcontract = node.hasSubcontract;
 
     const row = {
       清单项编码: node.code,
       层级编码: node.code,
       清单项名称: node.name,
-      成本科目编码: hasSubcontract ? "" : node.category || "",
+      成本科目编码:
+        hasSubcontract && !node.isLastTwoFirstLevel ? "" : node.category || "",
       测算数量: "",
       测算单价: "",
       测算金额无税: "",
@@ -542,7 +548,7 @@ class ExcelConverter {
       row.测算单价 = this.formatDecimal(
         node.subcontractType === "专业分包"
           ? node.profSubPrice
-          : node.laborSubPrice
+          : node.laborSubPrice,
       );
       row.测算金额无税 = this.formatDecimal(node.calcAmount);
       row.单位 = node.unit || "";
@@ -550,12 +556,20 @@ class ExcelConverter {
     }
     // 如果是非分包节点
     else {
-      // 填充合同数据（如果有直接合同数据）
-      if (node.quantity !== null && node.contractPrice !== null) {
+      if (node.isLastTwoFirstLevel && !node.isFirstLevel) {
         row.单位 = node.unit || "";
-        row.合同造价数量 = this.formatDecimal(node.quantity);
-        row.合同造价单价 = this.formatDecimal(node.contractPrice);
-        row.合同造价无税金额 = this.formatDecimal(node.contractAmount);
+        row.测算数量 = this.formatDecimal(node.quantity);
+        if (node.calcAmount > 0) {
+          row.测算金额无税 = this.formatDecimal(node.calcAmount);
+        }
+      } else {
+        // 填充合同数据（如果有直接合同数据）
+        if (node.quantity !== null && node.contractPrice !== null) {
+          row.单位 = node.unit || "";
+          row.合同造价数量 = this.formatDecimal(node.quantity);
+          row.合同造价单价 = this.formatDecimal(node.contractPrice);
+          row.合同造价无税金额 = this.formatDecimal(node.contractAmount);
+        }
       }
 
       // 填充合同金额（如果是最后两个一级工程，不显示分包金额）
@@ -589,7 +603,7 @@ class ExcelConverter {
         node,
         "劳务分包",
         "0001",
-        firstRow
+        firstRow,
       );
       rows.push(laborRow);
       firstRow = false;
@@ -601,7 +615,7 @@ class ExcelConverter {
         node,
         "专业分包",
         "0002",
-        firstRow
+        firstRow,
       );
       rows.push(profRow);
     }
@@ -684,7 +698,7 @@ class ExcelConverter {
 
     const processTime = (this.endTime - this.startTime) / 1000;
     console.log(
-      `转换完成！总行数: ${finalRows.length}, 耗时: ${processTime.toFixed(2)}秒`
+      `转换完成！总行数: ${finalRows.length}, 耗时: ${processTime.toFixed(2)}秒`,
     );
 
     return finalRows;
@@ -719,7 +733,7 @@ class ExcelConverter {
     const subStr = node.subcontractType ? `[分包:${node.subcontractType}]` : "";
 
     console.log(
-      `${indent}${node.code} - ${node.name}:  ${totalContract} ${totalCalc} ${lastTwoStr} ${subStr}`
+      `${indent}${node.code} - ${node.name}:  ${totalContract} ${totalCalc} ${lastTwoStr} ${subStr}`,
     );
 
     if (node.children && node.children.length > 0) {
@@ -1065,27 +1079,27 @@ class ExcelConverter {
     console.log(
       `分项1.1.1 + 分项1.1.2 合同金额: ${10 * 100 + 20 * 200} = ${
         node1_1?.contractAmountTotal
-      }`
+      }`,
     );
     console.log(
       `分部1.1 + 分部1.2 合同金额: ${10 * 100 + 20 * 200 + 30 * 300} = ${
         node1?.contractAmountTotal
-      }`
+      }`,
     );
     console.log(
       `分项1.1.1 分包测算: ${10 * 80} = ${
         this.nodeMap.get("1.001.001.001")?.calcAmountTotal
-      }`
+      }`,
     );
     console.log(
       `分项1.1.2 分包测算: ${20 * 150} = ${
         this.nodeMap.get("1.001.002.001")?.calcAmountTotal
-      }`
+      }`,
     );
     console.log(
       `工程1 总测算金额: ${10 * 80 + 20 * 150 + 30 * 250} = ${
         node1?.calcAmountTotal
-      }`
+      }`,
     );
 
     const passed =
@@ -1094,7 +1108,7 @@ class ExcelConverter {
       node1?.calcAmountTotal === 12800; // 10*80 + 20*150 + 30*250
 
     console.log(
-      passed ? "✅ 深层节点金额汇总测试通过" : "❌ 深层节点金额汇总测试失败"
+      passed ? "✅ 深层节点金额汇总测试通过" : "❌ 深层节点金额汇总测试失败",
     );
     return passed;
   }
